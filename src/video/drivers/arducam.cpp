@@ -33,8 +33,8 @@
 namespace pangolin
 {
 
-ArducamVideo::ArducamVideo(const std::string sn, const std::string config_file)
-    : is_streaming(false)
+ArducamVideo::ArducamVideo(const std::string sn, const std::string config_file, bool externalTrigger)
+    : is_streaming(false), externalTrigger(externalTrigger)
 {
     cameraCfg = (ArduCamCfg*) malloc (sizeof (ArduCamCfg));
     InitDevice(sn.c_str(), config_file.c_str());
@@ -155,8 +155,8 @@ void ArducamVideo::InitDevice(const char* sn, const char* config_file_name)
 	cameraCfg->u8PixelBits = cam_param->bit_width;
 	cameraCfg->u32TransLvl = cam_param->trans_lvl;
 
-	int ret_val = ArduCam_open(cameraHandle, cameraCfg, cameraId);
-	if (ret_val == USB_CAMERA_NO_ERROR) {
+	int rtn_val = ArduCam_open(cameraHandle, cameraCfg, cameraId);
+	if (rtn_val == USB_CAMERA_NO_ERROR) {
 		//ArduCam_enableForceRead(cameraHandle);	//Force display image
 		for (int i = 0; i < configs_length; i++) {
 			uint32_t type = configs[i].type;
@@ -176,12 +176,16 @@ void ArducamVideo::InitDevice(const char* sn, const char* config_file_name)
 		}
 		ArduCam_registerCtrls(cameraHandle, cam_cfgs.controls, cam_cfgs.controls_length);
 
+        ArduCam_readSensorReg(cameraHandle, 0x300C, &line_length_pck);
+        pango_print_info("ArducamVideo: line_length_pck %04x\n", line_length_pck);
+        vt_pix_clk_Mhz = 427; // empirically determined
+
         const StreamInfo stream_info(pfmt, cameraCfg->u32Width, cameraCfg->u32Height, cameraCfg->u32Width*cameraCfg->u8PixelBytes, 0);
         streams.push_back(stream_info);
         size_bytes = cameraCfg->u32Width*cameraCfg->u32Height*cameraCfg->u8PixelBytes;
 
 	} else {
-        pango_print_info("ArducamVideo: open retuned %04x\n", ret_val);
+        pango_print_info("ArducamVideo: open retuned %04x\n", rtn_val);
         throw VideoException("Unable to open ArduCam Device");
     }
 }
@@ -202,15 +206,24 @@ void ArducamVideo::DeinitDevice()
 
 void ArducamVideo::Start()
 {
-    if(!is_streaming) {
-        ArduCam_setMode(cameraHandle, CONTINUOUS_MODE);
-        uint32_t rtn_val = ArduCam_beginCaptureImage(cameraHandle);
+    uint32_t rtn_val;
 
-        if (rtn_val == USB_CAMERA_USB_TASK_ERROR) {
-            throw VideoException("Unable to start streaming.");
-        } else {
-            pango_print_debug("ArducamVideo: streaming started %d\n",rtn_val);
+    if(!is_streaming) {
+        if(externalTrigger) {
+            rtn_val =  ArduCam_setMode(cameraHandle,EXTERNAL_TRIGGER_MODE);
+            if(rtn_val == USB_BOARD_FW_VERSION_NOT_SUPPORT_ERROR){
+                throw VideoException("Usb board firmware version does not support single mode.\n");
+            }
             is_streaming = true;
+        } else {
+            ArduCam_setMode(cameraHandle, CONTINUOUS_MODE);
+            rtn_val = ArduCam_beginCaptureImage(cameraHandle);
+            if (rtn_val == USB_CAMERA_USB_TASK_ERROR) {
+                throw VideoException("Unable to start streaming.");
+            } else {
+                pango_print_debug("ArducamVideo: streaming started %d\n",rtn_val);
+                is_streaming = true;
+            }
         }
     }
 }
@@ -235,15 +248,16 @@ const std::vector<StreamInfo>& ArducamVideo::Streams() const
 
 bool ArducamVideo::GrabNext( unsigned char* image, bool /*wait*/ )
 {
-    uint32_t rtn_val = ArduCam_captureImage(cameraHandle);
+    uint32_t rtn_val;
 
-	if ((rtn_val == USB_CAMERA_USB_TASK_ERROR) || (rtn_val > 0xFF)) {
-		pango_print_debug("ArducamVideo: Error capture image %04x\n",rtn_val);
-		return false;
-	}
+    if(externalTrigger) {
+        rtn_val = ArduCam_isFrameReady(cameraHandle);
+        if(rtn_val != 1){
+		    pango_print_debug("ArducamVideo: FrameReady Error capture image %04x\n",rtn_val);
+		    return false;
+        }
 
-    if (ArduCam_availableImage(cameraHandle) > 0) {
-	    rtn_val = ArduCam_readImage(cameraHandle, frameData);
+        rtn_val = ArduCam_getSingleFrame(cameraHandle, frameData);
         if (rtn_val == USB_CAMERA_NO_ERROR) {
             memcpy(image, frameData->pu8ImageData, size_bytes);
             // This is a hack, this ts should come from the device, unfortunately frameData->uTime64 is always zero.
@@ -254,8 +268,29 @@ bool ArducamVideo::GrabNext( unsigned char* image, bool /*wait*/ )
             pango_print_error("ArducamVideo: Error read image %04x\n", rtn_val);
             return false;
         }
+    } else {
+        rtn_val = ArduCam_captureImage(cameraHandle);
+
+	    if ((rtn_val == USB_CAMERA_USB_TASK_ERROR) || (rtn_val > 0xFF)) {
+		    pango_print_debug("ArducamVideo: Error capture image %04x\n",rtn_val);
+		    return false;
+	    }
+
+        if (ArduCam_availableImage(cameraHandle) > 0) {
+	        rtn_val = ArduCam_readImage(cameraHandle, frameData);
+            if (rtn_val == USB_CAMERA_NO_ERROR) {
+                memcpy(image, frameData->pu8ImageData, size_bytes);
+                // This is a hack, this ts should come from the device, unfortunately frameData->uTime64 is always zero.
+                frame_properties[PANGO_HOST_RECEPTION_TIME_US] = picojson::value(pangolin::Time_us(pangolin::TimeNow()));
+                ArduCam_del(cameraHandle);
+                return true;
+            } else {
+                pango_print_error("ArducamVideo: Error read image %04x\n", rtn_val);
+                return false;
+            }
+        }
+        return false;
     }
-    return false;
 }
 
 bool ArducamVideo::GrabNewest( unsigned char* image, bool wait )
@@ -263,34 +298,77 @@ bool ArducamVideo::GrabNewest( unsigned char* image, bool wait )
     return GrabNext(image, wait);
 }
 
-bool ArducamVideo::SetExposure(int /*exp_us*/)
+bool ArducamVideo::SetExposure(int exp_us)
 {
-    //uint32_t e = uint32_t(exp_us);
-
-    //if (uvc_set_exposure_abs(devh_, e) < 0) {
-        pango_print_warn("ArducamVideo::setExposure() not implemented\n");
+    if(!cameraHandle) {
         return false;
-    //} else {
-    //    return true;
-    //}
+    }
+
+    uint32_t coarse_int_time = (exp_us * 4 * vt_pix_clk_Mhz) / line_length_pck;
+    uint32_t rtn_val = ArduCam_writeSensorReg(cameraHandle, 0x3012, coarse_int_time);
+
+    if(rtn_val == USB_CAMERA_NO_ERROR) {
+        return true;
+    } else {
+        pango_print_error("ArducamVideo::SetExposure() error %d\n",rtn_val);
+        return false;
+    }
 }
 
-bool ArducamVideo::GetExposure(int& /*exp_us*/)
+bool ArducamVideo::GetExposure(int& exp_us)
 {
-    //uint32_t e;
-    //if (uvc_get_exposure_abs(devh_, &e, uvc_req_code::UVC_GET_CUR) < 0) {
-        pango_print_warn("ArducamVideo::GetExposure() not implemented\n");
+    if(!cameraHandle) {
         return false;
-    //} else {
-    //    exp_us = e;
-    //   return true;
-    //}
+    }
+
+    uint32_t coarse_int_time;
+    uint32_t rtn_val = ArduCam_readSensorReg(cameraHandle, 0x3012, &coarse_int_time);
+
+    if(rtn_val == USB_CAMERA_NO_ERROR) {
+        exp_us = (coarse_int_time * line_length_pck)/(vt_pix_clk_Mhz * 4.0);
+        return true;
+    } else {
+        pango_print_error("ArducamVideo::GetExposure() error %d\n",rtn_val);
+        return false;
+    }
+}
+
+bool ArducamVideo::SetPeriod(int period_us)
+{
+    if(!cameraHandle) {
+        return false;
+    }
+
+    uint16_t frame_length_lines = (period_us * vt_pix_clk_Mhz) / line_length_pck;
+    uint32_t rtn_val = ArduCam_writeSensorReg(cameraHandle, 0x300A, frame_length_lines);
+    if(rtn_val == USB_CAMERA_NO_ERROR) {
+        return true;
+    } else {
+        pango_print_error("ArducamVideo::SetPeriod() error %d\n",rtn_val);
+        return false;
+    }
+}
+
+bool ArducamVideo::GetPeriod(int& period_us)
+{
+    if(!cameraHandle) {
+        return false;
+    }
+
+    uint32_t frame_length_lines;
+    uint32_t rtn_val = ArduCam_readSensorReg(cameraHandle, 0x300A, &frame_length_lines);
+    if(rtn_val == USB_CAMERA_NO_ERROR) {
+        period_us = (line_length_pck * frame_length_lines)/vt_pix_clk_Mhz;
+        return true;
+    } else {
+        pango_print_error("ArducamVideo::GetPeriod() error %d\n",rtn_val);
+        return false;
+    }
+
 }
 
 bool ArducamVideo::SetGain(float gain)
 {
-    return false;
-
     if(!cameraHandle) {
         return false;
     }
@@ -300,37 +378,68 @@ bool ArducamVideo::SetGain(float gain)
     float g = (gain < 1) ? 1 : gain;
     g = (gain > 16) ? 16 : g;
 
-    if(gain < 8) {
-
-        ArduCam_writeSensorReg(cameraHandle, 0x3F1A, 0x0F04);
-        ArduCam_writeSensorReg(cameraHandle, 0x3F44, 0x0C0C);
-    } else if(gain < 16) {
-        ArduCam_writeSensorReg(cameraHandle, 0x305E, 0x4004);
-        ArduCam_writeSensorReg(cameraHandle, 0x3F1A, 0x1E1E);
-        ArduCam_writeSensorReg(cameraHandle, 0x3F44, 0x0708);
-    } else {
-        ArduCam_writeSensorReg(cameraHandle, 0x305E, 0x4004);
-        ArduCam_writeSensorReg(cameraHandle, 0x3F1A, 0x1919);
-        ArduCam_writeSensorReg(cameraHandle, 0x3F44, 0x0101);
+    uint32_t r3040,r3EE0;
+    uint32_t rtn_val = ArduCam_readSensorReg(cameraHandle, 0x3040, &r3040);
+    if(rtn_val != USB_CAMERA_NO_ERROR) {
+        pango_print_error("ArducamVideo::GetGain() error %d\n",rtn_val);
+        return false;
     }
+    rtn_val = ArduCam_readSensorReg(cameraHandle, 0x3EE0, &r3EE0);
+    if(rtn_val != USB_CAMERA_NO_ERROR) {
+        pango_print_error("ArducamVideo::SetGain() error %d\n",rtn_val);
+        return false;
+    }
+
+    const uint16_t r3040_13 = (r3040 & 0x00002000) >> 13;
+    const uint16_t r3EE0_0 = (r3EE0 & 0x00000001);
+
+    g = 0.64 * pow(2,(r3040_13+r3EE0_0));
+
+    if(gain < 4) {
+
+
+    } else if(gain == 4) {
+
+    } else {
+
+    }
+
+    pango_print_warn("ArducamVideo:: SetGain value %f\n",g);
+
     return true;
 }
 
 bool ArducamVideo::GetGain(float& gain)
 {
-    return false;
     //see datasheet Table 10.
     if(!cameraHandle) {
         return false;
     }
 
     float g = 0;
+    uint32_t rtn_val;
 
     uint32_t r3ED2,r305E,r3040,r3EE0;
-    ArduCam_readSensorReg(cameraHandle, 0x3ED2, &r3ED2);
-    ArduCam_readSensorReg(cameraHandle, 0x305E, &r305E);
-    ArduCam_readSensorReg(cameraHandle, 0x3040, &r3040);
-    ArduCam_readSensorReg(cameraHandle, 0x3EE0, &r3EE0);
+    rtn_val = ArduCam_readSensorReg(cameraHandle, 0x3ED2, &r3ED2);
+    if(rtn_val != USB_CAMERA_NO_ERROR) {
+        pango_print_error("ArducamVideo::GetGain() error %d\n",rtn_val);
+        return false;
+    }
+    rtn_val = ArduCam_readSensorReg(cameraHandle, 0x305E, &r305E);
+    if(rtn_val != USB_CAMERA_NO_ERROR) {
+        pango_print_error("ArducamVideo::GetGain() error %d\n",rtn_val);
+        return false;
+    }
+    rtn_val = ArduCam_readSensorReg(cameraHandle, 0x3040, &r3040);
+    if(rtn_val != USB_CAMERA_NO_ERROR) {
+        pango_print_error("ArducamVideo::GetGain() error %d\n",rtn_val);
+        return false;
+    }
+    rtn_val = ArduCam_readSensorReg(cameraHandle, 0x3EE0, &r3EE0);
+    if(rtn_val != USB_CAMERA_NO_ERROR) {
+        pango_print_error("ArducamVideo::GetGain() error %d\n",rtn_val);
+        return false;
+    }
 
     const uint16_t r305E_2_0 = (r305E & 0x00000007);
     const uint16_t r305E_6_3 = (r305E & 0x00000078) >> 3;
@@ -339,39 +448,29 @@ bool ArducamVideo::GetGain(float& gain)
     const uint16_t r3EE0_0 = (r3EE0 & 0x00000001);
     const uint16_t r3ED2_15_12 = (r3ED2 & 0x0000F000) >> 12;
 
+    g = (r305E_15_7/64.0);
+    g*= pow(2,(r3040_13+r3EE0_0));
     if(r3ED2_15_12 == 0x4) {
         if(r305E_2_0 < 4) {
-            g = pow(2,(r305E_2_0-1));
+            g*= pow(2,(r305E_2_0-1));
             g*= 1.0/(1-(r305E_6_3/32.0));
-            g*= (r305E_15_7/64.0);
-            g*= pow(2,(r3040_13+r3EE0_0));
         } else if(r305E_2_0 == 4) {
-            g = pow(2,(r305E_2_0-1));
-            g*= (r305E_15_7/64.0);
-            g*= pow(2,(r3040_13+r3EE0_0));
+            g*= pow(2,(r305E_2_0-1));
         } else if(r305E_2_0 > 4) {
-            g = 1.5*(r305E_2_0-6);
-            g= 1.0/(1-(r305E_6_3)/32.0);
-            g*= (r305E_15_7/64.0);
-            g*= pow(2,(r3040_13+r3EE0_0));
+            g*= 1.5*(r305E_2_0-6);
+            g*= 1.0/(1-(r305E_6_3)/32.0);
         } else {
             pango_print_warn("ArducamVideo:: invalid 0x305E register value\n");
         }
     } else if(r3ED2_15_12 == 14){
         if(r305E_2_0 < 4) {
-            g = 0.64*pow(2,(r305E_2_0-1));
+            g*= 0.64*pow(2,(r305E_2_0-1));
             g*= 1.0/(1-(r305E_6_3/32.0));
-            g*= (r305E_15_7/64.0);     // missing in datasheet
-            g*= pow(2,(r3040_13+r3EE0_0));
         } else if(r305E_2_0 == 4) {
-            g = 0.64*pow(2,(r305E_2_0-1));
-            g*= (r305E_15_7/64.0);
-            g*= pow(2,(r3040_13+r3EE0_0));
+            g*= 0.64*pow(2,(r305E_2_0-1));
         } else if(r305E_2_0 > 4) {
-            g = 0.64*1.5*(r305E_2_0-6);
+            g*= 0.64*1.5*(r305E_2_0-6);
             g*= 1.0/(1-(r305E_6_3/32.0));
-            g*= (r305E_15_7/64.0);
-            g*= pow(2,(r3040_13+r3EE0_0));
         } else {
             pango_print_warn("ArducamVideo:: invalid 0x305E register value\n");
         }
@@ -379,8 +478,51 @@ bool ArducamVideo::GetGain(float& gain)
         pango_print_warn("ArducamVideo:: invalid 0x3ED2 register value\n");
     }
 
+    pango_print_warn("ArducamVideo:: GetGain value %f\n",g);
+
     gain = g;
     return true;
+}
+
+bool ArducamVideo::GetParameter(const std::string& name, std::string& result) {
+
+    if(name.compare("Gain")==0) {
+        float g;
+        GetGain(g);
+        std::cout<<"gain:"<<g<<std::endl;
+        result.assign(std::to_string(g));
+        return true;
+    } else if(name.compare("ExposureTime")==0) {
+        int e;
+        GetExposure(e);
+        result.assign(std::to_string(e));
+        return true;
+    } else if(name.compare("Period")==0) {
+        int p;
+        GetPeriod(p);
+        std::cout<<"period:"<<p<<std::endl;
+        result.assign(std::to_string(p));
+        return true;
+    } else {
+        pango_print_error("Parameter %s not recognized\n", name.c_str());
+        return false;
+    }
+}
+
+bool ArducamVideo::SetParameter(const std::string& name, const std::string& value) {
+
+    if(name.compare("Gain")==0) {
+        std::cout<<"gain:"<<value<<std::endl;
+        return SetGain(std::stof(value));
+    } else if(name.compare("ExposureTime")==0) {
+        return SetExposure(std::stoi(value));
+    } else if(name.compare("Period")==0) {
+        std::cout<<"period:"<<value<<std::endl;
+        return SetPeriod(std::stoi(value));
+    } else {
+        pango_print_error("Parameter %s not recognized\n", name.c_str());
+        return false;
+    }
 }
 
 //! Access JSON properties of device
@@ -399,11 +541,22 @@ PANGOLIN_REGISTER_FACTORY(ArducamVideo)
 {
     struct ArducamVideoFactory final : public FactoryInterface<VideoInterface> {
         std::unique_ptr<VideoInterface> Open(const Uri& uri) override {
-            std::cout<<"*>"<<uri.url<<"<*"<<std::endl;
+
             const std::string sn = uri.Get<std::string>("sn","");
             const std::string cfgFile = uri.Get<std::string>("cfgFile","");
-            //const ImageDim dim = uri.Get<ImageDim>("size", ImageDim(640,480));
-            return std::unique_ptr<VideoInterface>( new ArducamVideo(sn,cfgFile) );
+            const bool externalTrigger = uri.Get<bool>("ExternalTrigger", false);
+
+            ArducamVideo* video_raw = new ArducamVideo(sn,cfgFile,externalTrigger);
+            if(video_raw  && uri.Contains("ExposureTime")) {
+                static_cast<ArducamVideo*>(video_raw)->SetExposure(uri.Get<int>("ExposureTime", 10000));
+            }
+            if(video_raw  && uri.Contains("Gain")) {
+                static_cast<ArducamVideo*>(video_raw)->SetGain(uri.Get<int>("Gain", 1));
+            }
+            if(video_raw  && uri.Contains("period")) {
+                static_cast<ArducamVideo*>(video_raw)->SetPeriod(uri.Get<uint64_t>("period", 10000));
+            }
+            return std::unique_ptr<VideoInterface>(video_raw);
         }
     };
 

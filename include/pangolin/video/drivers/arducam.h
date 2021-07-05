@@ -45,10 +45,10 @@ typedef struct timeval {
 namespace pangolin
 {
 
-class PANGOLIN_EXPORT ArducamVideo : public VideoInterface, public VideoPropertiesInterface
+class PANGOLIN_EXPORT ArducamVideo : public VideoInterface, public VideoPropertiesInterface, public GenicamVideoInterface
 {
 public:
-    ArducamVideo(const std::string sn, const std::string config_file_name);
+    ArducamVideo(const std::string sn, const std::string config_file_name, bool externalTrigger);
     ~ArducamVideo();
 
     void InitDevice(const char* sn, const char* config_file_name);
@@ -72,17 +72,9 @@ public:
     //! Implement VideoInput::GrabNewest()
     bool GrabNewest( unsigned char* image, bool wait = true );
 
-    //! Implement VideoUvcInterface::GetExposure()
-    bool GetExposure(int& exp_us);
+    bool GetParameter(const std::string& name, std::string& result);
 
-    //! Implement VideoUvcInterface::SetExposure()
-    bool SetExposure(int exp_us);
-
-    //! Implement VideoUvcInterface::GetGain()
-    bool GetGain(float& gain);
-
-    //! Implement VideoUvcInterface::SetGain()
-    bool SetGain(float gain);
+    bool SetParameter(const std::string& name, const std::string& value);
 
     //! Access JSON properties of device
     const picojson::value& DeviceProperties() const;
@@ -90,7 +82,15 @@ public:
     //! Access JSON properties of most recently captured frame
     const picojson::value& FrameProperties() const;
 
+    bool GetExposure(int& exp_us);
+    bool SetExposure(int exp_us);
+    bool GetGain(float& gain);
+    bool SetGain(float gain);
+    bool SetPeriod(int period_us);
+    bool GetPeriod(int& period_us);
+
 protected:
+
     void InitPangoDeviceProperties();
 
     void ConfigBoard(Config config);
@@ -108,7 +108,9 @@ protected:
     picojson::value device_properties;
     picojson::value frame_properties;
     bool is_streaming;
-
+    bool externalTrigger;
+    uint32_t line_length_pck;
+    uint32_t vt_pix_clk_Mhz;
 };
 
 }
