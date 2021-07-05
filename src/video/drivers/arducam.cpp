@@ -287,28 +287,100 @@ bool ArducamVideo::GetExposure(int& /*exp_us*/)
     //}
 }
 
-bool ArducamVideo::SetGain(float /*gain*/)
+bool ArducamVideo::SetGain(float gain)
 {
-    //uint16_t g = uint16_t(gain);
+    return false;
 
-    //if (uvc_set_gain(devh_, g) < 0) {
-        pango_print_warn("ArducamVideo::setGain() not implemented\n");
+    if(!cameraHandle) {
         return false;
-    //} else {
-    //    return true;
-    //}
+    }
+
+    //see datasheet Table 10.
+    //note this is correct only for full res.
+    float g = (gain < 1) ? 1 : gain;
+    g = (gain > 16) ? 16 : g;
+
+    if(gain < 8) {
+
+        ArduCam_writeSensorReg(cameraHandle, 0x3F1A, 0x0F04);
+        ArduCam_writeSensorReg(cameraHandle, 0x3F44, 0x0C0C);
+    } else if(gain < 16) {
+        ArduCam_writeSensorReg(cameraHandle, 0x305E, 0x4004);
+        ArduCam_writeSensorReg(cameraHandle, 0x3F1A, 0x1E1E);
+        ArduCam_writeSensorReg(cameraHandle, 0x3F44, 0x0708);
+    } else {
+        ArduCam_writeSensorReg(cameraHandle, 0x305E, 0x4004);
+        ArduCam_writeSensorReg(cameraHandle, 0x3F1A, 0x1919);
+        ArduCam_writeSensorReg(cameraHandle, 0x3F44, 0x0101);
+    }
+    return true;
 }
 
-bool ArducamVideo::GetGain(float& /*gain*/)
+bool ArducamVideo::GetGain(float& gain)
 {
-    //uint16_t g;
-    //if (uvc_get_gain(devh_, &g, uvc_req_code::UVC_GET_CUR) < 0) {
-        pango_print_warn("ArducamVideo::GetGain() not implemented\n");
+    return false;
+    //see datasheet Table 10.
+    if(!cameraHandle) {
         return false;
-    //} else {
-    //   gain = g;
-    //    return true;
-    //}
+    }
+
+    float g = 0;
+
+    uint32_t r3ED2,r305E,r3040,r3EE0;
+    ArduCam_readSensorReg(cameraHandle, 0x3ED2, &r3ED2);
+    ArduCam_readSensorReg(cameraHandle, 0x305E, &r305E);
+    ArduCam_readSensorReg(cameraHandle, 0x3040, &r3040);
+    ArduCam_readSensorReg(cameraHandle, 0x3EE0, &r3EE0);
+
+    const uint16_t r305E_2_0 = (r305E & 0x00000007);
+    const uint16_t r305E_6_3 = (r305E & 0x00000078) >> 3;
+    const uint16_t r305E_15_7 = (r305E & 0x0000FF80) >> 7;
+    const uint16_t r3040_13 = (r3040 & 0x00002000) >> 13;
+    const uint16_t r3EE0_0 = (r3EE0 & 0x00000001);
+    const uint16_t r3ED2_15_12 = (r3ED2 & 0x0000F000) >> 12;
+
+    if(r3ED2_15_12 == 0x4) {
+        if(r305E_2_0 < 4) {
+            g = pow(2,(r305E_2_0-1));
+            g*= 1.0/(1-(r305E_6_3/32.0));
+            g*= (r305E_15_7/64.0);
+            g*= pow(2,(r3040_13+r3EE0_0));
+        } else if(r305E_2_0 == 4) {
+            g = pow(2,(r305E_2_0-1));
+            g*= (r305E_15_7/64.0);
+            g*= pow(2,(r3040_13+r3EE0_0));
+        } else if(r305E_2_0 > 4) {
+            g = 1.5*(r305E_2_0-6);
+            g= 1.0/(1-(r305E_6_3)/32.0);
+            g*= (r305E_15_7/64.0);
+            g*= pow(2,(r3040_13+r3EE0_0));
+        } else {
+            pango_print_warn("ArducamVideo:: invalid 0x305E register value\n");
+        }
+    } else if(r3ED2_15_12 == 14){
+        if(r305E_2_0 < 4) {
+            g = 0.64*pow(2,(r305E_2_0-1));
+            g*= 1.0/(1-(r305E_6_3/32.0));
+            g*= (r305E_15_7/64.0);     // missing in datasheet
+            g*= pow(2,(r3040_13+r3EE0_0));
+        } else if(r305E_2_0 == 4) {
+            g = 0.64*pow(2,(r305E_2_0-1));
+            g*= (r305E_15_7/64.0);
+            g*= pow(2,(r3040_13+r3EE0_0));
+        } else if(r305E_2_0 > 4) {
+            g = 0.64*1.5*(r305E_2_0-6);
+            g*= 1.0/(1-(r305E_6_3/32.0));
+            g*= (r305E_15_7/64.0);
+            g*= pow(2,(r3040_13+r3EE0_0));
+        } else {
+            pango_print_warn("ArducamVideo:: invalid 0x305E register value\n");
+        }
+    } else {
+        pango_print_warn("ArducamVideo:: invalid 0x3ED2 register value\n");
+    }
+
+    gain = g;
+    return true;
 }
 
 //! Access JSON properties of device
