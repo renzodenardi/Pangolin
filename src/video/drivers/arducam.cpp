@@ -376,37 +376,25 @@ bool ArducamVideo::SetGain(float gain)
     //see datasheet Table 10.
     //note this is correct only for full res.
     float g = (gain < 1) ? 1 : gain;
-    g = (gain > 16) ? 16 : g;
+    g = (gain >= 16) ? 15.95 : g;
 
-    uint32_t r3040,r3EE0;
-    uint32_t rtn_val = ArduCam_readSensorReg(cameraHandle, 0x3040, &r3040);
-    if(rtn_val != USB_CAMERA_NO_ERROR) {
-        pango_print_error("ArducamVideo::GetGain() error %d\n",rtn_val);
-        return false;
+    const uint16_t r305E_2_0 = int(log2f(g))+1;
+    g = g/pow(2,r305E_2_0-1);
+
+    uint16_t r305E_6_3 = 0;
+    if(gain < 8) {
+        r305E_6_3 = round(32-32/g-0.4);   // 0.4 empirically added to match datasheet
+        g = g*(1-r305E_6_3/32.0);
     }
-    rtn_val = ArduCam_readSensorReg(cameraHandle, 0x3EE0, &r3EE0);
+    uint16_t r305E_15_7 = round(g*64);
+
+    uint32_t rtn_val = ArduCam_writeSensorReg(cameraHandle, 0x305E, (r305E_15_7<<7)|(r305E_6_3<<3)|r305E_2_0);
     if(rtn_val != USB_CAMERA_NO_ERROR) {
         pango_print_error("ArducamVideo::SetGain() error %d\n",rtn_val);
         return false;
-    }
-
-    const uint16_t r3040_13 = (r3040 & 0x00002000) >> 13;
-    const uint16_t r3EE0_0 = (r3EE0 & 0x00000001);
-
-    g = 0.64 * pow(2,(r3040_13+r3EE0_0));
-
-    if(gain < 4) {
-
-
-    } else if(gain == 4) {
-
     } else {
-
+        return true;
     }
-
-    pango_print_warn("ArducamVideo:: SetGain value %f\n",g);
-
-    return true;
 }
 
 bool ArducamVideo::GetGain(float& gain)
@@ -419,12 +407,15 @@ bool ArducamVideo::GetGain(float& gain)
     float g = 0;
     uint32_t rtn_val;
 
-    uint32_t r3ED2,r305E,r3040,r3EE0;
-    rtn_val = ArduCam_readSensorReg(cameraHandle, 0x3ED2, &r3ED2);
-    if(rtn_val != USB_CAMERA_NO_ERROR) {
-        pango_print_error("ArducamVideo::GetGain() error %d\n",rtn_val);
-        return false;
-    }
+    uint32_t r305E;
+    uint32_t r3040;
+    //uint32_t r3EE0;
+    //uint32_t r3ED2;
+    // rtn_val = ArduCam_readSensorReg(cameraHandle, 0x3ED2, &r3ED2);
+    // if(rtn_val != USB_CAMERA_NO_ERROR) {
+    //     pango_print_error("ArducamVideo::GetGain() error %d\n",rtn_val);
+    //     return false;
+    // }
     rtn_val = ArduCam_readSensorReg(cameraHandle, 0x305E, &r305E);
     if(rtn_val != USB_CAMERA_NO_ERROR) {
         pango_print_error("ArducamVideo::GetGain() error %d\n",rtn_val);
@@ -435,50 +426,50 @@ bool ArducamVideo::GetGain(float& gain)
         pango_print_error("ArducamVideo::GetGain() error %d\n",rtn_val);
         return false;
     }
-    rtn_val = ArduCam_readSensorReg(cameraHandle, 0x3EE0, &r3EE0);
-    if(rtn_val != USB_CAMERA_NO_ERROR) {
-        pango_print_error("ArducamVideo::GetGain() error %d\n",rtn_val);
-        return false;
-    }
+    // rtn_val = ArduCam_readSensorReg(cameraHandle, 0x3ED2, &r3EE0);
+    // if(rtn_val != USB_CAMERA_NO_ERROR) {
+    //     pango_print_error("ArducamVideo::GetGain() error %d\n",rtn_val);
+    //     return false;
+    // }
 
     const uint16_t r305E_2_0 = (r305E & 0x00000007);
     const uint16_t r305E_6_3 = (r305E & 0x00000078) >> 3;
     const uint16_t r305E_15_7 = (r305E & 0x0000FF80) >> 7;
     const uint16_t r3040_13 = (r3040 & 0x00002000) >> 13;
-    const uint16_t r3EE0_0 = (r3EE0 & 0x00000001);
-    const uint16_t r3ED2_15_12 = (r3ED2 & 0x0000F000) >> 12;
+    //const uint16_t r3EE0_0 = (r3EE0 & 0x00000001);
+    //const uint16_t r3ED2_15_12 = (r3ED2 & 0x0000F000) >> 12;
 
     g = (r305E_15_7/64.0);
-    g*= pow(2,(r3040_13+r3EE0_0));
-    if(r3ED2_15_12 == 0x4) {
-        if(r305E_2_0 < 4) {
-            g*= pow(2,(r305E_2_0-1));
-            g*= 1.0/(1-(r305E_6_3/32.0));
-        } else if(r305E_2_0 == 4) {
-            g*= pow(2,(r305E_2_0-1));
-        } else if(r305E_2_0 > 4) {
-            g*= 1.5*(r305E_2_0-6);
-            g*= 1.0/(1-(r305E_6_3)/32.0);
-        } else {
-            pango_print_warn("ArducamVideo:: invalid 0x305E register value\n");
-        }
-    } else if(r3ED2_15_12 == 14){
-        if(r305E_2_0 < 4) {
-            g*= 0.64*pow(2,(r305E_2_0-1));
-            g*= 1.0/(1-(r305E_6_3/32.0));
-        } else if(r305E_2_0 == 4) {
-            g*= 0.64*pow(2,(r305E_2_0-1));
-        } else if(r305E_2_0 > 4) {
-            g*= 0.64*1.5*(r305E_2_0-6);
-            g*= 1.0/(1-(r305E_6_3/32.0));
-        } else {
-            pango_print_warn("ArducamVideo:: invalid 0x305E register value\n");
-        }
+    g*= pow(2,(r3040_13));//+r3EE0_0));
+ //   if(r3ED2_15_12 == 0x4) {
+    if(r305E_2_0 < 4) {
+        g*= pow(2,(r305E_2_0-1));
+        g*= 1.0/(1-(r305E_6_3/32.0));
+    } else if(r305E_2_0 == 4) {
+        g*= pow(2,(r305E_2_0-1));
+    } else if(r305E_2_0 < 7) {
+        g*= 1.5*(r305E_2_0-6);
+        g*= 1.0/(1-(r305E_6_3)/32.0);
     } else {
-        pango_print_warn("ArducamVideo:: invalid 0x3ED2 register value\n");
+        pango_print_warn("ArducamVideo:: invalid 0x305E[2:0] register value %d\n",r305E_2_0);
     }
+    // } else if(r3ED2_15_12 == 14){
+    //     if(r305E_2_0 < 4) {
+    //         g*= 0.64*pow(2,(r305E_2_0-1));
+    //         g*= 1.0/(1-(r305E_6_3/32.0));
+    //     } else if(r305E_2_0 == 4) {
+    //         g*= 0.64*pow(2,(r305E_2_0-1));
+    //     } else if(r305E_2_0 < 7) {
+    //         g*= 0.64*1.5*(r305E_2_0-6);
+    //         g*= 1.0/(1-(r305E_6_3/32.0));
+    //     } else {
+    //         pango_print_warn("ArducamVideo:: invalid 0x305E[2:0] register value %d\n",r305E_2_0);
+    //     }
+    // } else {
+    //     pango_print_warn("ArducamVideo:: invalid 0x3ED2[15:12] register value %d\n",r3ED2);
+    // }
 
-    pango_print_warn("ArducamVideo:: GetGain value %f\n",g);
+    //pango_print_warn("ArducamVideo:: GetGain() value: %f\n",g);
 
     gain = g;
     return true;
@@ -489,7 +480,6 @@ bool ArducamVideo::GetParameter(const std::string& name, std::string& result) {
     if(name.compare("Gain")==0) {
         float g;
         GetGain(g);
-        std::cout<<"gain:"<<g<<std::endl;
         result.assign(std::to_string(g));
         return true;
     } else if(name.compare("ExposureTime")==0) {
@@ -500,7 +490,6 @@ bool ArducamVideo::GetParameter(const std::string& name, std::string& result) {
     } else if(name.compare("Period")==0) {
         int p;
         GetPeriod(p);
-        std::cout<<"period:"<<p<<std::endl;
         result.assign(std::to_string(p));
         return true;
     } else {
@@ -512,12 +501,10 @@ bool ArducamVideo::GetParameter(const std::string& name, std::string& result) {
 bool ArducamVideo::SetParameter(const std::string& name, const std::string& value) {
 
     if(name.compare("Gain")==0) {
-        std::cout<<"gain:"<<value<<std::endl;
         return SetGain(std::stof(value));
     } else if(name.compare("ExposureTime")==0) {
         return SetExposure(std::stoi(value));
     } else if(name.compare("Period")==0) {
-        std::cout<<"period:"<<value<<std::endl;
         return SetPeriod(std::stoi(value));
     } else {
         pango_print_error("Parameter %s not recognized\n", name.c_str());
