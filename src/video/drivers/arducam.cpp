@@ -65,7 +65,7 @@ bool ArducamVideo::FindDevice(const char *sn, int& id) {
 	        for (int c = 0; c < num_cams; c++) {
                 if(strcmp(sn,(char*)pUsbIdxArray[c].u8SerialNum)==0) {
                     pango_print_info("ArducamVideo: requested device with sn %s, found!\n",sn);
-                    id = c;
+                    id = pUsbIdxArray[c].u8UsbIndex;
                     return true;
                 }
 	        }
