@@ -28,7 +28,7 @@ find_library(
 )
 
 set(Ximea_INCLUDE_DIRS ${Ximea_INCLUDE_DIR})
-set(TeliCam_LIBRARIES ${Ximea_LIBRARY})
+set(Ximea_LIBRARIES ${Ximea_LIBRARY})
 
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args( Ximea

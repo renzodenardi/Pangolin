@@ -25,9 +25,9 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include <XmlFeatures.h>
+
 #include <pangolin/factory/factory_registry.h>
-#include <pangolin/video/drivers/teli.h>
+#include <pangolin/video/drivers/ximea.h>
 #include <pangolin/video/iostream_operators.h>
 
 namespace pangolin
@@ -35,14 +35,16 @@ namespace pangolin
 
 void HandleResult(XI_RETURN res,std::string place) {
     if (res!=XI_OK) {
-        pango_print_error("Error after %s (%d)\n", place, res);
+        pango_print_error("Error after %s\n", place.c_str());
     }
 }
 
 XimeaVideo::XimeaVideo(const Params& p)
-    : cam(0), strm(0), hStrmCmpEvt(0), transfer_bandwidth_gbps(0), exposure_us(0)
 {
-    stat = xiOpenDevice(0, &xiH);
+    memset(&x_image,0,sizeof(x_image));
+    x_image.size = sizeof(XI_IMG);
+
+    XI_RETURN stat = xiOpenDevice(0, &xiH);
 	HandleResult(stat,"xiOpenDevice");
 
     // Setting "exposure" parameter (10ms=10000us)
@@ -61,13 +63,13 @@ bool XimeaVideo::GetParameter(const std::string& name, std::string& result)
 {
     if (name.compare("Gain")==0) {
         float g;
-        xiGetParamFloat(handle, XI_PRM_GAIN, &g);
-        result.assing(std::to_string(g));
+        xiGetParamFloat(xiH, XI_PRM_GAIN, &g);
+        result.assign(std::to_string(g));
         return true;
     } else if (name.compare("ExposureTime")==0) {
         float e;
-        xiGetParamFloat(handle, XI_PRM_EXPOSURE, &e);
-        result.assing(std::to_string(e));
+        xiGetParamFloat(xiH, XI_PRM_EXPOSURE, &e);
+        result.assign(std::to_string(e));
         return true;
     } else {
         pango_print_error("Parameter %s not recognized\n", name.c_str());
@@ -78,11 +80,11 @@ bool XimeaVideo::GetParameter(const std::string& name, std::string& result)
 bool XimeaVideo::SetParameter(const std::string& name, const std::string& value)
 {
     if (name.compare("Gain")==0) {
-        xiSetParamFloat(handle, XI_PRM_GAIN, stof(value));
+        xiSetParamFloat(xiH, XI_PRM_GAIN, stof(value));
         return true;
     } else if (name.compare("ExposureTime")==0) {
-        xiSetParamInt(handle, XI_PRM_EXPOSURE, stoi(value));
-        return true
+        xiSetParamInt(xiH, XI_PRM_EXPOSURE, stoi(value));
+        return true;
     } else {
         pango_print_error("Parameter %s not recognized\n", name.c_str());
         return false;
@@ -106,30 +108,10 @@ void XimeaVideo::InitPangoDeviceProperties()
     // TODO: Enumerate other settings.
 }
 
-void XimeaVideo::SetDeviceParams(const Params& p)
-{
-    for(Params::ParamMap::const_iterator it = p.params.begin(); it != p.params.end(); it++) {
-        if(it->first == "transfer_bandwidth_gbps") {
-            transfer_bandwidth_gbps = atof(it->second.c_str());
-        } else {
-        try{
-            if (it->second == "Execute") {
-                //
-                std::runtime_error("TeliSDK: Execution commands not yet supported.");
-            } else {
-                SetParameter(it->first, it->second);
-            }
-        }catch(std::exception& e) {
-            std::cerr << e.what() << std::endl;
-        }
-        }
-    }
-}
-
 //! Implement VideoInput::Start()
 void XimeaVideo::Start()
 {
-    stat = xiStartAcquisition(xiH);
+    XI_RETURN stat = xiStartAcquisition(xiH);
 	HandleResult(stat,"xiStartAcquisition");
 }
 
@@ -154,10 +136,10 @@ const std::vector<StreamInfo>& XimeaVideo::Streams() const
 bool XimeaVideo::GrabNext(unsigned char* image, bool /*wait*/)
 {
     // getting image from camera
-    stat = xiGetImage(xiH, 5000, &image);
+    XI_RETURN stat = xiGetImage(xiH, 5000, &x_image);
     HandleResult(stat,"xiGetImage");
-    unsigned char pixel = *(unsigned char*)image.bp;
-    printf("Image %dx%d received from camera. First pixel value: %d\n", (int)image.width, (int)image.height, pixel);
+    unsigned char pixel = *(unsigned char*)x_image.bp;
+    printf("Image %dx%d received from camera. First pixel value: %d\n", (int)x_image.width, (int)x_image.height, pixel);
 
     return false;
 }

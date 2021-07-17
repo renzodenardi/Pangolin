@@ -37,8 +37,7 @@ namespace pangolin
 {
 
 // Video class that outputs test video signal.
-class PANGOLIN_EXPORT XimeaVideo : public VideoInterface, public VideoPropertiesInterface,
-        public BufferAwareVideoInterface, public GenicamVideoInterface
+class PANGOLIN_EXPORT XimeaVideo : public VideoInterface, public VideoPropertiesInterface, public GenicamVideoInterface
 {
 public:
     XimeaVideo(const Params &p);
@@ -93,11 +92,13 @@ public:
 
 protected:
     void InitPangoDeviceProperties();
+
     std::vector<StreamInfo> streams;
     size_t size_bytes;
 
     HANDLE xiH = NULL;
-    XI_RETURN stat = XI_OK;
+    XI_IMG x_image;
+ //
 
 // #ifdef _WIN_
 //     HANDLE hStrmCmpEvt;
