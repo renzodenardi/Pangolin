@@ -58,28 +58,6 @@ XimeaVideo::XimeaVideo(const Params& p): sn(""), streaming(false)
         if (stat != XI_OK)
             throw pangolin::VideoException("XimeaVideo: Unable to open Ximea camera with sn:" + sn);
     }
- /*
-         else if(it->first == "idx"){
-            cam_index = p.Get<int>("idx", 0);
-        } else if(it->first == "size") {
-            const ImageDim dim = p.Get<ImageDim>("size", ImageDim(0,0) );
-            device_params.Set("Width"  , dim.x);
-            device_params.Set("Height" , dim.y);
-        } else if(it->first == "pos") {
-            const ImageDim pos = p.Get<ImageDim>("pos", ImageDim(0,0) );
-            device_params.Set("OffsetX"  , pos.x);
-            device_params.Set("OffsetY" , pos.y);
-        } else if(it->first == "roi") {
-            const ImageRoi roi = p.Get<ImageRoi>("roi", ImageRoi(0,0,0,0) );
-            device_params.Set("Width"  , roi.w);
-            device_params.Set("Height" , roi.h);
-            device_params.Set("OffsetX", roi.x);
-            device_params.Set("OffsetY", roi.y);
-        } else {
-            device_params.Set(it->first, it->second);
-        }
-    }
-*/
 
     // Read pixel format
     PixelFormat pfmt;
@@ -106,6 +84,26 @@ XimeaVideo::XimeaVideo(const Params& p): sn(""), streaming(false)
         default:
             throw pangolin::VideoException("XimeaVideo: Unknown pixel format: " + std::to_string(XI_RGB24) );
     }
+
+    for(Params::ParamMap::const_iterator it = p.params.begin(); it != p.params.end(); it++) {
+ /*     if(it->first == "size") {
+            const ImageDim dim = p.Get<ImageDim>("size", ImageDim(0,0) );
+            device_params.Set("Width"  , dim.x);
+            device_params.Set("Height" , dim.y);
+        } else if(it->first == "pos") {
+            const ImageDim pos = p.Get<ImageDim>("pos", ImageDim(0,0) );
+            device_params.Set("OffsetX"  , pos.x);
+            device_params.Set("OffsetY" , pos.y);
+        } else if(it->first == "roi") {
+            const ImageRoi roi = p.Get<ImageRoi>("roi", ImageRoi(0,0,0,0) );
+            device_params.Set("Width"  , roi.w);
+            device_params.Set("Height" , roi.h);
+            device_params.Set("OffsetX", roi.x);
+            device_params.Set("OffsetY", roi.y);
+        } else { */
+        SetParameter(it->first, it->second);
+    }
+
 
     int h = 0;
     stat = xiGetParamInt(xiH, XI_PRM_HEIGHT, &h);
@@ -261,7 +259,7 @@ bool XimeaVideo::GrabNext(unsigned char* image, bool /*wait*/)
         basetime now = pangolin::TimeNow();
         frame_properties[PANGO_HOST_RECEPTION_TIME_US] = picojson::value(pangolin::Time_us(now));
         frame_properties["frame_number"] = picojson::value(x_image.nframe);
-        pango_print_info("frame: %5d : %10lu\n",x_image.nframe,uint64_t(x_image.tsUSec+x_image.tsSec*1e6));
+        //pango_print_info("frame: %5d : %10lu\n",x_image.nframe,uint64_t(x_image.tsUSec+x_image.tsSec*1e6));
         if(x_image.padding_x!=0) {
             throw pangolin::VideoException("XimeaVideo: image has non zero padding, current code does not handle this!");
         }
