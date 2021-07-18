@@ -91,13 +91,17 @@ public:
     // void PopulateEstimatedCenterCaptureTime(pangolin::basetime host_reception_time);
 
 protected:
+    void PopulateEstimatedCenterCaptureTime(pangolin::basetime host_reception_time);
     void InitPangoDeviceProperties();
 
     std::vector<StreamInfo> streams;
     size_t size_bytes;
+    std::string sn;
 
     HANDLE xiH = NULL;
     XI_IMG x_image;
+    int exposure_us;
+    bool streaming;
  //
 
 // #ifdef _WIN_

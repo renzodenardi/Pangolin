@@ -33,23 +33,88 @@
 namespace pangolin
 {
 
-void HandleResult(XI_RETURN res,std::string place) {
-    if (res!=XI_OK) {
-        pango_print_error("Error after %s\n", place.c_str());
-    }
-}
-
-XimeaVideo::XimeaVideo(const Params& p)
+XimeaVideo::XimeaVideo(const Params& p): sn(""), streaming(false)
 {
+    XI_RETURN stat;
     memset(&x_image,0,sizeof(x_image));
     x_image.size = sizeof(XI_IMG);
 
-    XI_RETURN stat = xiOpenDevice(0, &xiH);
-	HandleResult(stat,"xiOpenDevice");
+    for(Params::ParamMap::const_iterator it = p.params.begin(); it != p.params.end(); it++) {
+        if(it->first == "sn"){
+            sn = it->second;
+        }
+    }
 
-    // Setting "exposure" parameter (10ms=10000us)
-	stat = xiSetParamInt(xiH, XI_PRM_EXPOSURE, 10000);
-	HandleResult(stat,"xiSetParam (exposure set)");
+    if(sn=="") {
+        stat = xiOpenDevice(0, &xiH);
+        if (stat != XI_OK)
+            throw pangolin::VideoException("Unable to open first Ximea camera.");
+        char c_sn[100]="";
+        xiGetParamString(xiH, XI_PRM_DEVICE_SN, c_sn, sizeof(sn));
+        sn.assign(c_sn);
+	    pango_print_info("Ximea: camera sn:%s\n",c_sn);
+    } else {
+        stat = xiOpenDeviceBy(XI_OPEN_BY_SN, sn.c_str(), &xiH);
+        if (stat != XI_OK)
+            throw pangolin::VideoException("Unable to open Ximea camera with sn:" + sn);
+    }
+ /*
+         else if(it->first == "idx"){
+            cam_index = p.Get<int>("idx", 0);
+        } else if(it->first == "size") {
+            const ImageDim dim = p.Get<ImageDim>("size", ImageDim(0,0) );
+            device_params.Set("Width"  , dim.x);
+            device_params.Set("Height" , dim.y);
+        } else if(it->first == "pos") {
+            const ImageDim pos = p.Get<ImageDim>("pos", ImageDim(0,0) );
+            device_params.Set("OffsetX"  , pos.x);
+            device_params.Set("OffsetY" , pos.y);
+        } else if(it->first == "roi") {
+            const ImageRoi roi = p.Get<ImageRoi>("roi", ImageRoi(0,0,0,0) );
+            device_params.Set("Width"  , roi.w);
+            device_params.Set("Height" , roi.h);
+            device_params.Set("OffsetX", roi.x);
+            device_params.Set("OffsetY", roi.y);
+        } else {
+            device_params.Set(it->first, it->second);
+        }
+    }
+*/
+
+    // Read pixel format
+    PixelFormat pfmt;
+    int x_fmt = 0;
+    stat = xiGetParamInt(xiH, XI_PRM_IMAGE_DATA_FORMAT, &x_fmt);
+    if (stat != XI_OK)
+        throw pangolin::VideoException("Ximea: Error getting XI_PRM_IMAGE_DATA_FORMAT.");
+
+    switch(x_fmt) {
+        case XI_MONO8:
+        case XI_RAW8:
+            pfmt = pangolin::PixelFormatFromString("GRAY8");
+            break;
+        case XI_MONO16:
+        case XI_RAW16:
+            pfmt = pangolin::PixelFormatFromString("GRAY16LE");
+            break;
+        case XI_RGB24:
+            pfmt = pangolin::PixelFormatFromString("RGB24");
+            break;
+        case XI_RGB32:
+            pfmt = pangolin::PixelFormatFromString("RGB32");
+            break;
+        default:
+            throw pangolin::VideoException("Ximea: Unknown pixel format: " + std::to_string(XI_RGB24) );
+    }
+
+    int h = 0;
+    xiGetParamInt(xiH, XI_PRM_HEIGHT, &h);
+    int w = 0;
+    xiGetParamInt(xiH, XI_PRM_WIDTH, &w);
+
+    const StreamInfo stream_info(pfmt, w, h, (w*pfmt.bpp) / 8, 0);
+    streams.push_back(stream_info);
+    size_bytes = w*h*pfmt.bpp/8;
 
     InitPangoDeviceProperties();
 }
@@ -61,64 +126,101 @@ XimeaVideo::~XimeaVideo()
 
 bool XimeaVideo::GetParameter(const std::string& name, std::string& result)
 {
+    XI_RETURN stat;
     if (name.compare("Gain")==0) {
         float g;
-        xiGetParamFloat(xiH, XI_PRM_GAIN, &g);
-        result.assign(std::to_string(g));
-        return true;
+        stat = xiGetParamFloat(xiH, XI_PRM_GAIN, &g);
+        if(stat == XI_OK) {
+            result.assign(std::to_string(g));
+            return true;
+        } else {
+            pango_print_error("XimeaVideo: error getting Gain\n");
+            return false;
+        }
     } else if (name.compare("ExposureTime")==0) {
         float e;
-        xiGetParamFloat(xiH, XI_PRM_EXPOSURE, &e);
-        result.assign(std::to_string(e));
-        return true;
+        stat = xiGetParamFloat(xiH, XI_PRM_EXPOSURE, &e);
+        if(stat == XI_OK) {
+            result.assign(std::to_string(e));
+            return true;
+        } else {
+            pango_print_error("XimeaVideo: error getting ExposureTime\n");
+            return false;
+        }
     } else {
-        pango_print_error("Parameter %s not recognized\n", name.c_str());
+        pango_print_error("XimeaVideo: GetParameter, param %s not recognized\n", name.c_str());
         return false;
     }
 }
 
 bool XimeaVideo::SetParameter(const std::string& name, const std::string& value)
 {
+    XI_RETURN stat;
     if (name.compare("Gain")==0) {
-        xiSetParamFloat(xiH, XI_PRM_GAIN, stof(value));
-        return true;
+        stat = xiSetParamFloat(xiH, XI_PRM_GAIN, stof(value));
+        if(stat == XI_OK) {
+            return true;
+        } else {
+            pango_print_error("XimeaVideo: error setting Gain\n");
+            return false;
+        }
     } else if (name.compare("ExposureTime")==0) {
-        xiSetParamInt(xiH, XI_PRM_EXPOSURE, stoi(value));
-        return true;
+        stat = xiSetParamInt(xiH, XI_PRM_EXPOSURE, stoi(value));
+        if(stat == XI_OK) {
+            return true;
+        } else {
+            pango_print_error("XimeaVideo: error setting ExposureTime\n");
+            return false;
+        }
     } else {
-        pango_print_error("Parameter %s not recognized\n", name.c_str());
+        pango_print_error("XimeaVideo: SetParameter, param %s not recognized\n", name.c_str());
         return false;
     }
 }
 
 void XimeaVideo::InitPangoDeviceProperties()
 {
-
-    // Teli::CAM_INFO info;
-    // Teli::Cam_GetInformation(cam, 0, &info);
-
+    XI_RETURN stat;
     // Store camera details in device properties
-    // device_properties["SerialNumber"] = std::string(info.szSerialNumber);
-    // device_properties["VendorName"] = std::string(info.szManufacturer);
-    // device_properties["ModelName"] = std::string(info.szModelName);
-    // device_properties["ManufacturerInfo"] = std::string(info.sU3vCamInfo.szManufacturerInfo);
-    // device_properties["Version"] = std::string(info.sU3vCamInfo.szDeviceVersion);
+    device_properties["VendorName"] = "Ximea";
+    device_properties["SerialNumber"] = sn;
+    int id = 0;
+    stat = xiGetParamInt(xiH, XI_PRM_DEVICE_MODEL_ID, &id);
+    if(stat != XI_OK) {
+        pango_print_error("XimeaVideo: error getting DeviceModelID\n");
+    } else {
+        device_properties["ModelID"] = std::to_string(id);
+    }
+    int sid = 0;
+    stat = xiGetParamInt(xiH, XI_PRM_SENSOR_MODEL_ID, &sid);
+    if(stat != XI_OK) {
+        pango_print_error("XimeaVideo: error getting SensorModelID\n");
+    } else {
+        device_properties["SensorModelID"] = std::to_string(sid);
+    }
     device_properties[PANGO_HAS_TIMING_DATA] = true;
-
-    // TODO: Enumerate other settings.
 }
 
 //! Implement VideoInput::Start()
 void XimeaVideo::Start()
 {
     XI_RETURN stat = xiStartAcquisition(xiH);
-	HandleResult(stat,"xiStartAcquisition");
+	if (stat != XI_OK) {
+        throw pangolin::VideoException("Error starting stream.");
+        SetParameter("ExposureTime","5000");
+    } else {
+        streaming = true;
+    }
 }
 
 //! Implement VideoInput::Stop()
 void XimeaVideo::Stop()
 {
-    xiStopAcquisition(xiH);
+    if(streaming) {
+        XI_RETURN stat = xiStopAcquisition(xiH);
+        if (stat != XI_OK)
+            throw pangolin::VideoException("Error stopping stream.");
+    }
 }
 
 //! Implement VideoInput::SizeBytes()
@@ -133,15 +235,34 @@ const std::vector<StreamInfo>& XimeaVideo::Streams() const
     return streams;
 }
 
+void XimeaVideo::PopulateEstimatedCenterCaptureTime(basetime host_reception_time)
+{
+    //if(transfer_bandwidth_gbps) {
+        const float transfer_time_us = 0;//size_bytes / int64_t((transfer_bandwidth_gbps * 1E3) / 8.0);
+        frame_properties[PANGO_ESTIMATED_CENTER_CAPTURE_TIME_US] = picojson::value(int64_t(pangolin::Time_us(host_reception_time) -  (exposure_us/2.0) - transfer_time_us));
+    //}
+}
+
 bool XimeaVideo::GrabNext(unsigned char* image, bool /*wait*/)
 {
     // getting image from camera
     XI_RETURN stat = xiGetImage(xiH, 5000, &x_image);
-    HandleResult(stat,"xiGetImage");
-    unsigned char pixel = *(unsigned char*)x_image.bp;
-    printf("Image %dx%d received from camera. First pixel value: %d\n", (int)x_image.width, (int)x_image.height, pixel);
-
-    return false;
+    if(stat == XI_OK) {
+        memcpy(image,x_image.bp,x_image.bp_size);
+        frame_properties[PANGO_EXPOSURE_US] = picojson::value(exposure_us);
+        frame_properties[PANGO_CAPTURE_TIME_US] = picojson::value(uint64_t(x_image.tsUSec+x_image.tsSec*1e6));
+        basetime now = pangolin::TimeNow();
+        frame_properties[PANGO_HOST_RECEPTION_TIME_US] = picojson::value(pangolin::Time_us(now));
+        frame_properties["frame_number"] = picojson::value(x_image.nframe);
+        pango_print_info("frame: %5d : %10lu\n",x_image.nframe,uint64_t(x_image.tsUSec+x_image.tsSec*1e6));
+        if(x_image.padding_x!=0) {
+            throw pangolin::VideoException("image has non zero padding, current code does not handle this!");
+        }
+        PopulateEstimatedCenterCaptureTime(now);
+        return true;
+    } else {
+        return false;
+    }
 }
 
 //! Implement VideoInput::GrabNewest()
