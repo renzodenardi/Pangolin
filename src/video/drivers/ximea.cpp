@@ -48,15 +48,15 @@ XimeaVideo::XimeaVideo(const Params& p): sn(""), streaming(false)
     if(sn=="") {
         stat = xiOpenDevice(0, &xiH);
         if (stat != XI_OK)
-            throw pangolin::VideoException("Unable to open first Ximea camera.");
+            throw pangolin::VideoException("XimeaVideo: Unable to open first Ximea camera.");
         char c_sn[100]="";
         xiGetParamString(xiH, XI_PRM_DEVICE_SN, c_sn, sizeof(sn));
         sn.assign(c_sn);
-	    pango_print_info("Ximea: camera sn:%s\n",c_sn);
+	    pango_print_info("XimeaVideo: camera sn:%s\n",c_sn);
     } else {
         stat = xiOpenDeviceBy(XI_OPEN_BY_SN, sn.c_str(), &xiH);
         if (stat != XI_OK)
-            throw pangolin::VideoException("Unable to open Ximea camera with sn:" + sn);
+            throw pangolin::VideoException("XimeaVideo: Unable to open Ximea camera with sn:" + sn);
     }
  /*
          else if(it->first == "idx"){
@@ -86,7 +86,7 @@ XimeaVideo::XimeaVideo(const Params& p): sn(""), streaming(false)
     int x_fmt = 0;
     stat = xiGetParamInt(xiH, XI_PRM_IMAGE_DATA_FORMAT, &x_fmt);
     if (stat != XI_OK)
-        throw pangolin::VideoException("Ximea: Error getting XI_PRM_IMAGE_DATA_FORMAT.");
+        throw pangolin::VideoException("XimeaVideo: Error getting image format.");
 
     switch(x_fmt) {
         case XI_MONO8:
@@ -104,13 +104,17 @@ XimeaVideo::XimeaVideo(const Params& p): sn(""), streaming(false)
             pfmt = pangolin::PixelFormatFromString("RGB32");
             break;
         default:
-            throw pangolin::VideoException("Ximea: Unknown pixel format: " + std::to_string(XI_RGB24) );
+            throw pangolin::VideoException("XimeaVideo: Unknown pixel format: " + std::to_string(XI_RGB24) );
     }
 
     int h = 0;
-    xiGetParamInt(xiH, XI_PRM_HEIGHT, &h);
+    stat = xiGetParamInt(xiH, XI_PRM_HEIGHT, &h);
+    if (stat != XI_OK)
+        throw pangolin::VideoException("XimeaVideo: Error getting image height.");
     int w = 0;
-    xiGetParamInt(xiH, XI_PRM_WIDTH, &w);
+    stat = xiGetParamInt(xiH, XI_PRM_WIDTH, &w);
+    if (stat != XI_OK)
+        throw pangolin::VideoException("XimeaVideo: Error getting image width.");
 
     const StreamInfo stream_info(pfmt, w, h, (w*pfmt.bpp) / 8, 0);
     streams.push_back(stream_info);
@@ -121,7 +125,11 @@ XimeaVideo::XimeaVideo(const Params& p): sn(""), streaming(false)
 
 XimeaVideo::~XimeaVideo()
 {
-    xiCloseDevice(xiH);
+    XI_RETURN stat;
+    stat = xiCloseDevice(xiH);
+    if (stat != XI_OK)
+        pango_print_error("XimeaVideo: Error closing device.");
+
 }
 
 bool XimeaVideo::GetParameter(const std::string& name, std::string& result)
@@ -206,8 +214,7 @@ void XimeaVideo::Start()
 {
     XI_RETURN stat = xiStartAcquisition(xiH);
 	if (stat != XI_OK) {
-        throw pangolin::VideoException("Error starting stream.");
-        SetParameter("ExposureTime","5000");
+        throw pangolin::VideoException("XimeaVideo: Error starting stream.");
     } else {
         streaming = true;
     }
@@ -219,7 +226,7 @@ void XimeaVideo::Stop()
     if(streaming) {
         XI_RETURN stat = xiStopAcquisition(xiH);
         if (stat != XI_OK)
-            throw pangolin::VideoException("Error stopping stream.");
+            throw pangolin::VideoException("XimeaVideo: Error stopping stream.");
     }
 }
 
@@ -256,7 +263,7 @@ bool XimeaVideo::GrabNext(unsigned char* image, bool /*wait*/)
         frame_properties["frame_number"] = picojson::value(x_image.nframe);
         pango_print_info("frame: %5d : %10lu\n",x_image.nframe,uint64_t(x_image.tsUSec+x_image.tsSec*1e6));
         if(x_image.padding_x!=0) {
-            throw pangolin::VideoException("image has non zero padding, current code does not handle this!");
+            throw pangolin::VideoException("XimeaVideo: image has non zero padding, current code does not handle this!");
         }
         PopulateEstimatedCenterCaptureTime(now);
         return true;
