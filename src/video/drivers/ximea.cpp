@@ -86,22 +86,23 @@ XimeaVideo::XimeaVideo(const Params& p): sn(""), streaming(false)
     }
 
     for(Params::ParamMap::const_iterator it = p.params.begin(); it != p.params.end(); it++) {
- /*     if(it->first == "size") {
+        if(it->first == "size") {
             const ImageDim dim = p.Get<ImageDim>("size", ImageDim(0,0) );
-            device_params.Set("Width"  , dim.x);
-            device_params.Set("Height" , dim.y);
+            SetParameter("Width"  , std::to_string(dim.x));
+            SetParameter("Height" , std::to_string(dim.y));
         } else if(it->first == "pos") {
             const ImageDim pos = p.Get<ImageDim>("pos", ImageDim(0,0) );
-            device_params.Set("OffsetX"  , pos.x);
-            device_params.Set("OffsetY" , pos.y);
+            SetParameter("OffsetX"  , std::to_string(pos.x));
+            SetParameter("OffsetY" , std::to_string(pos.y));
         } else if(it->first == "roi") {
             const ImageRoi roi = p.Get<ImageRoi>("roi", ImageRoi(0,0,0,0) );
-            device_params.Set("Width"  , roi.w);
-            device_params.Set("Height" , roi.h);
-            device_params.Set("OffsetX", roi.x);
-            device_params.Set("OffsetY", roi.y);
-        } else { */
-        SetParameter(it->first, it->second);
+            SetParameter("Width"  , std::to_string(roi.w));
+            SetParameter("Height" , std::to_string(roi.h));
+            SetParameter("OffsetX", std::to_string(roi.x));
+            SetParameter("OffsetY", std::to_string(roi.y));
+        } else {
+            SetParameter(it->first, it->second);
+        }
     }
 
 
@@ -176,6 +177,90 @@ bool XimeaVideo::SetParameter(const std::string& name, const std::string& value)
             return true;
         } else {
             pango_print_error("XimeaVideo: error setting ExposureTime\n");
+            return false;
+        }
+    } else if (name.compare("Width")==0) {
+        stat = xiSetParamInt(xiH, XI_PRM_WIDTH, stoi(value));
+        if(stat == XI_OK) {
+            return true;
+        } else {
+            pango_print_error("XimeaVideo: error setting Width\n");
+            return false;
+        }
+    } else if (name.compare("Height")==0) {
+        stat = xiSetParamInt(xiH, XI_PRM_HEIGHT, stoi(value));
+        if(stat == XI_OK) {
+            return true;
+        } else {
+            pango_print_error("XimeaVideo: error setting Height\n");
+            return false;
+        }
+    } else if (name.compare("OffsetX")==0) {
+        stat = xiSetParamInt(xiH, XI_PRM_OFFSET_X, stoi(value));
+        if(stat == XI_OK) {
+            return true;
+        } else {
+            pango_print_error("XimeaVideo: error setting OffsetX\n");
+            return false;
+        }
+    } else if (name.compare("OffsetY")==0) {
+        stat = xiSetParamInt(xiH, XI_PRM_OFFSET_Y, stoi(value));
+        if(stat == XI_OK) {
+            return true;
+        } else {
+            pango_print_error("XimeaVideo: error setting OffsetY\n");
+            return false;
+        }
+    } else if ((name.compare("downsampling")==0)||(name.compare("binning")==0)) {
+        int v;
+        if((value.compare("1")==0)||(value.compare("1x1")==0)){
+            v = XI_DWN_1x1;
+        } else if((value.compare("2")==0)||(value.compare("2x2")==0)){
+            v = XI_DWN_2x2;
+        } else if((value.compare("3")==0)||(value.compare("3x3")==0)){
+            v = XI_DWN_3x3;
+        } else if((value.compare("4")==0)||(value.compare("4x4")==0)){
+            v = XI_DWN_4x4;
+        } else if((value.compare("5")==0)||(value.compare("5x5")==0)){
+            v = XI_DWN_5x5;
+        } else if((value.compare("6")==0)||(value.compare("6x6")==0)){
+            v = XI_DWN_6x6;
+        } else if((value.compare("7")==0)||(value.compare("7x7")==0)){
+            v = XI_DWN_7x7;
+        } else if((value.compare("8")==0)||(value.compare("8x8")==0)){
+            v = XI_DWN_8x8;
+        } else if((value.compare("9")==0)||(value.compare("9x9")==0)){
+            v = XI_DWN_9x9;
+        } else if((value.compare("10")==0)||(value.compare("10x10")==0)){
+            v = XI_DWN_10x10;
+        } else if((value.compare("16")==0)||(value.compare("16x16")==0)){
+            v = XI_DWN_16x16;
+        } else {
+            pango_print_error("XimeaVideo: unrecognized downsampling factor %s\n",value.c_str());
+            return false;
+        }
+        stat = xiSetParamInt(xiH, XI_PRM_DOWNSAMPLING, v);
+        if(stat == XI_OK) {
+            return true;
+        } else {
+            pango_print_error("XimeaVideo: error setting downsampling\n");
+            return false;
+        }
+    } else if (name.compare("downsampling_type")==0) {
+        int v;
+        if(value.compare("binning")==0){
+            v = XI_BINNING;
+        } else if(value.compare("skipping")==0){
+            v = XI_SKIPPING;
+        } else {
+            pango_print_error("XimeaVideo: unrecognized downsampling_type %s\n",value.c_str());
+            return false;
+        }
+        stat = xiSetParamInt(xiH, XI_PRM_DOWNSAMPLING_TYPE, v);
+        if(stat == XI_OK) {
+            return true;
+        } else {
+            pango_print_error("XimeaVideo: error setting downsampling_type\n");
             return false;
         }
     } else {
