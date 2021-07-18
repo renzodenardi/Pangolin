@@ -36,7 +36,7 @@
 namespace pangolin
 {
 
-// Video class that outputs test video signal.
+// Video class that outputs video data from a Ximea camera.
 class PANGOLIN_EXPORT XimeaVideo : public VideoInterface, public VideoPropertiesInterface, public GenicamVideoInterface
 {
 public:
@@ -63,14 +63,6 @@ public:
     //! Implement VideoInput::GrabNewest()
     bool GrabNewest( unsigned char* image, bool wait = true );
 
-    // inline Teli::CAM_HANDLE GetCameraHandle() {
-    //     return cam;
-    // }
-
-    // inline Teli::CAM_STRM_HANDLE GetCameraStreamHandle() {
-    //     return strm;
-    // }
-
     bool GetParameter(const std::string& name, std::string& result);
 
     bool SetParameter(const std::string& name, const std::string& value);
@@ -88,8 +80,6 @@ public:
     //! Access JSON properties of most recently captured frame
     const picojson::value& FrameProperties() const;
 
-    // void PopulateEstimatedCenterCaptureTime(pangolin::basetime host_reception_time);
-
 protected:
     void PopulateEstimatedCenterCaptureTime(pangolin::basetime host_reception_time);
     void InitPangoDeviceProperties();
@@ -102,16 +92,7 @@ protected:
     XI_IMG x_image;
     int exposure_us;
     bool streaming;
- //
 
-// #ifdef _WIN_
-//     HANDLE hStrmCmpEvt;
-// #endif
-// #ifdef _LINUX_
-//     Teli::SIGNAL_HANDLE hStrmCmpEvt;
-// #endif
-    // double transfer_bandwidth_gbps;
-    // int exposure_us;
     picojson::value device_properties;
     picojson::value frame_properties;
 };
